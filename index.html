@@ -1,0 +1,1416 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Танки: 50 уровней</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: #232d23; touch-action: none; user-select: none;
+    font-family: Arial, sans-serif;
+  }
+  #game { display: block; width: 100vw; height: 100vh; }
+
+  #joystick {
+    position: fixed; bottom: 40px; left: 40px; z-index: 10;
+    width: 160px; height: 160px;
+    border-radius: 50%; background: rgba(255,255,255,0.08);
+    border: 2px solid rgba(255,255,255,0.2);
+    display: none; touch-action: none;
+  }
+  #joystick-knob {
+    position: absolute; left: 50%; top: 50%;
+    width: 70px; height: 70px; margin: -35px 0 0 -35px;
+    border-radius: 50%; background: rgba(80,200,80,0.5);
+    border: 2px solid rgba(255,255,255,0.4);
+    pointer-events: none;
+  }
+  #fire-btn {
+    position: fixed; bottom: 40px; right: 40px; z-index: 10;
+    width: 130px; height: 130px;
+    border-radius: 50%; background: rgba(220,60,60,0.35);
+    border: 3px solid rgba(255,120,120,0.6);
+    display: none; align-items: center; justify-content: center;
+    color: #fff; font-size: 46px; font-weight: bold;
+    touch-action: none; user-select: none;
+  }
+  #fire-btn.active { background: rgba(255,80,80,0.6); }
+
+  #menu {
+    position: fixed; inset: 0; z-index: 20;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 20px; overflow-y: auto;
+    background: rgba(20,30,20,0.92); color: #fff;
+  }
+  #menu h1 { font-size: 30px; margin-bottom: 14px; text-align: center; }
+  #menu .info { font-size: 18px; color: #ffdd66; margin-bottom: 12px; text-align: center; }
+  #menu .levels {
+    display: grid; grid-template-columns: repeat(5, 1fr);
+    gap: 8px; width: 100%; max-width: 500px; margin-bottom: 20px;
+  }
+  #menu .levels button {
+    aspect-ratio: 1; font-size: 16px; border-radius: 10px;
+    border: none; cursor: pointer; color: #fff;
+    background: #4a7a4a; font-weight: bold;
+  }
+  #menu .levels button.locked { background: #3a3a3a; color: #777; cursor: not-allowed; }
+  #menu .levels button.done { background: #2a6a2a; }
+  #menu .levels button.boss { background: #b84a4a; }
+  #menu .levels button.midboss { background: #c89a30; }
+  #menu .row { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-bottom: 12px; }
+  #menu button.big {
+    padding: 14px 24px; font-size: 18px; border-radius: 12px;
+    border: none; color: #fff; background: #3766b8; cursor: pointer;
+  }
+  #menu button.danger { background: #a04040; }
+  #menu .shop-row {
+    width: 100%; max-width: 500px; padding: 12px;
+    background: rgba(0,0,0,0.35); border-radius: 12px; margin-bottom: 10px;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  #menu .shop-row .title { font-size: 18px; font-weight: bold; }
+  #menu .shop-row .sub { font-size: 14px; color: #ffd966; }
+  #menu .shop-row button {
+    margin-top: 6px; padding: 10px; border-radius: 10px;
+    border: none; color: #fff; font-size: 16px; cursor: pointer;
+    background: #308030; font-weight: bold;
+  }
+  #menu .shop-row button:disabled { background: #404040; color: #888; cursor: not-allowed; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<canvas id="game"></canvas>
+<div id="joystick"><div id="joystick-knob"></div></div>
+<div id="fire-btn">🔥</div>
+<div id="menu">
+  <h1>🎮 ТАНКИ: 50 УРОВНЕЙ</h1>
+  <div class="info" id="info">Очки: 0 · Рекорд: 0</div>
+  <div id="menu-content"></div>
+</div>
+
+<script>
+// ============================================================
+//  КОНСТАНТЫ
+// ============================================================
+const WIDTH  = 1280;
+const HEIGHT = 720;
+const LEVELS = 50;
+const SAVE_KEY = "tanks_save_v1";
+
+const DMG_COSTS  = [300, 700, 1200, 2000, 3000];
+const RATE_COSTS = [250, 600, 1000, 1700, 2600];
+const HP_COSTS   = [400, 900, 1500, 2400, 3500];
+const LASER_COST = 15000;
+const BASE_DMG   = 1;
+const BASE_SHOOT_CD = 0.35;
+const HP_VALUES  = [5, 12, 19, 26, 33, 40];
+
+// ============================================================
+//  СОХРАНЕНИЕ
+// ============================================================
+function loadSave() {
+  const def = { unlocked: 1, best: 0, bank: 0, completed: {}, bosses: {},
+                dmg_lvl: 0, rate_lvl: 0, hp_lvl: 0, laser: false };
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return def;
+    return Object.assign(def, JSON.parse(raw));
+  } catch (e) { return def; }
+}
+function writeSave() {
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(SAVE)); } catch (e) {}
+}
+let SAVE = loadSave();
+
+function playerDamage()  { return BASE_DMG + SAVE.dmg_lvl; }
+function playerShootCd() { return BASE_SHOOT_CD * Math.pow(0.85, SAVE.rate_lvl); }
+function playerHp() {
+  const lvl = Math.max(0, Math.min(SAVE.hp_lvl, HP_VALUES.length - 1));
+  return HP_VALUES[lvl];
+}
+
+// ============================================================
+//  УТИЛИТЫ
+// ============================================================
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function circlesOverlap(x1, y1, r1, x2, y2, r2) {
+  const dx = x1 - x2, dy = y1 - y2;
+  return dx * dx + dy * dy < (r1 + r2) * (r1 + r2);
+}
+function circleRectOverlap(cx, cy, cr, rect) {
+  const nx = clamp(cx, rect.left, rect.right);
+  const ny = clamp(cy, rect.top, rect.bottom);
+  return (cx - nx) ** 2 + (cy - ny) ** 2 < cr * cr;
+}
+function rayRectHit(x, y, dx, dy, rect) {
+  let tmin = 0, tmax = 1e9;
+  if (Math.abs(dx) < 1e-8) {
+    if (x < rect.left || x > rect.right) return null;
+  } else {
+    let t1 = (rect.left - x) / dx, t2 = (rect.right - x) / dx;
+    if (t1 > t2) [t1, t2] = [t2, t1];
+    tmin = Math.max(tmin, t1); tmax = Math.min(tmax, t2);
+    if (tmin > tmax) return null;
+  }
+  if (Math.abs(dy) < 1e-8) {
+    if (y < rect.top || y > rect.bottom) return null;
+  } else {
+    let t1 = (rect.top - y) / dy, t2 = (rect.bottom - y) / dy;
+    if (t1 > t2) [t1, t2] = [t2, t1];
+    tmin = Math.max(tmin, t1); tmax = Math.min(tmax, t2);
+    if (tmin > tmax) return null;
+  }
+  return Math.max(tmin, 0);
+}
+
+// ============================================================
+//  БАЗА ТАНКА
+// ============================================================
+class TankBase {
+  tryMove(dx, dy, boxes, otherTanks) {
+    let moved = false;
+    let nx = clamp(this.x + dx, this.radius, WIDTH - this.radius);
+    if (!this._collides(nx, this.y, boxes, otherTanks)) { this.x = nx; moved = true; }
+    let ny = clamp(this.y + dy, this.radius, HEIGHT - this.radius);
+    if (!this._collides(this.x, ny, boxes, otherTanks)) { this.y = ny; moved = true; }
+    if (!moved) {
+      if (Math.abs(dx) > Math.abs(dy)) {
+        for (const s of [1, -1]) {
+          const oy = clamp(this.y + s * this.radius * 0.8, this.radius, HEIGHT - this.radius);
+          if (!this._collides(this.x, oy, boxes, otherTanks)) { this.y = oy; moved = true; break; }
+        }
+      } else {
+        for (const s of [1, -1]) {
+          const ox = clamp(this.x + s * this.radius * 0.8, this.radius, WIDTH - this.radius);
+          if (!this._collides(ox, this.y, boxes, otherTanks)) { this.x = ox; moved = true; break; }
+        }
+      }
+    }
+    return moved;
+  }
+  _collides(nx, ny, boxes, otherTanks) {
+    for (const b of boxes) if (circleRectOverlap(nx, ny, this.radius, b.rect)) return true;
+    for (const t of otherTanks) {
+      if (t === this || t.dead) continue;
+      if (circlesOverlap(nx, ny, this.radius, t.x, t.y, t.radius)) return true;
+    }
+    return false;
+  }
+  _blockedByBoxes(x, y, boxes) {
+    for (const b of boxes) if (circleRectOverlap(x, y, this.radius, b.rect)) return true;
+    return false;
+  }
+}
+
+// ============================================================
+//  ПУЛЯ
+// ============================================================
+class Bullet {
+  constructor(x, y, dx, dy, fromPlayer, damage = 1) {
+    this.x = x; this.y = y;
+    const n = Math.hypot(dx, dy) || 1;
+    this.dx = dx / n; this.dy = dy / n;
+    this.fromPlayer = fromPlayer;
+    this.damage = damage;
+    this.speed = 620; this.life = 3.0; this.dead = false;
+    this.radius = 6; this.trail = [];
+  }
+  update(dt) {
+    this.trail.push([this.x, this.y]);
+    if (this.trail.length > 10) this.trail.shift();
+    this.x += this.dx * this.speed * dt;
+    this.y += this.dy * this.speed * dt;
+    this.life -= dt;
+    if (this.life <= 0 || this.x < 0 || this.x > WIDTH || this.y < 0 || this.y > HEIGHT) this.dead = true;
+  }
+  draw(ctx) {
+    const n = this.trail.length;
+    for (let i = 0; i < n; i++) {
+      const [tx, ty] = this.trail[i];
+      const a = i / Math.max(1, n);
+      const r = Math.max(1, this.radius * a);
+      ctx.fillStyle = this.fromPlayer
+        ? `rgb(255,${Math.floor(200*a+60)},${Math.floor(60*a)})`
+        : `rgb(255,${Math.floor(120*a+40)},${Math.floor(40*a)})`;
+      ctx.beginPath(); ctx.arc(tx, ty, r, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.fillStyle = this.fromPlayer ? "rgb(255,240,120)" : "rgb(255,140,40)";
+    ctx.beginPath(); ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = this.fromPlayer ? "#fff" : "rgb(255,240,200)";
+    ctx.beginPath(); ctx.arc(this.x, this.y, this.radius - 3, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+// ============================================================
+//  ЛАЗЕР
+// ============================================================
+class LaserBeam {
+  constructor(x1, y1, x2, y2) {
+    this.x1 = x1; this.y1 = y1; this.x2 = x2; this.y2 = y2;
+    this.t = 0; this.duration = 0.05; this.dead = false;
+  }
+  update(dt) { this.t += dt; if (this.t >= this.duration) this.dead = true; }
+  draw(ctx) {
+    const a = 1 - this.t / this.duration;
+    const w = 6 * a + 2;
+    ctx.globalAlpha = a * 0.5; ctx.strokeStyle = "rgb(255,80,80)"; ctx.lineWidth = w * 3;
+    ctx.beginPath(); ctx.moveTo(this.x1, this.y1); ctx.lineTo(this.x2, this.y2); ctx.stroke();
+    ctx.globalAlpha = a * 0.8; ctx.strokeStyle = "rgb(255,180,180)"; ctx.lineWidth = w * 1.5;
+    ctx.beginPath(); ctx.moveTo(this.x1, this.y1); ctx.lineTo(this.x2, this.y2); ctx.stroke();
+    ctx.globalAlpha = a; ctx.strokeStyle = "#fff"; ctx.lineWidth = Math.max(1, w / 2);
+    ctx.beginPath(); ctx.moveTo(this.x1, this.y1); ctx.lineTo(this.x2, this.y2); ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+}
+
+// ============================================================
+//  ВЗРЫВ
+// ============================================================
+class Explosion {
+  constructor(x, y, color = [255, 180, 60], size = 1, count = 18) {
+    this.x = x; this.y = y;
+    this.t = 0; this.duration = 0.6; this.dead = false;
+    this.baseColor = color; this.size = size;
+    this.particles = [];
+    for (let i = 0; i < count; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const spd = (80 + Math.random() * 240) * size;
+      this.particles.push({
+        x: 0, y: 0, vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd,
+        r: (2 + Math.random() * 4) * size,
+        life: 0.3 + Math.random() * 0.3, age: 0,
+      });
+    }
+  }
+  update(dt) {
+    this.t += dt;
+    for (const p of this.particles) {
+      p.x += p.vx * dt; p.y += p.vy * dt;
+      p.vx *= 0.92; p.vy *= 0.92; p.vy += 40 * dt;
+      p.age += dt;
+    }
+    if (this.t >= this.duration) this.dead = true;
+  }
+  draw(ctx) {
+    const progress = this.t / this.duration;
+    const radius = 60 * this.size * (1 - progress) + 8;
+    if (radius > 0) {
+      const alpha = Math.max(0, 1 - progress);
+      ctx.globalAlpha = alpha * 0.8;
+      ctx.fillStyle = `rgb(${this.baseColor[0]},${this.baseColor[1]},${this.baseColor[2]})`;
+      ctx.beginPath(); ctx.arc(this.x, this.y, radius, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    for (const p of this.particles) {
+      if (p.age >= p.life) continue;
+      const a = 1 - p.age / p.life;
+      ctx.fillStyle = `rgb(${Math.floor(this.baseColor[0]*a + 255*(1-a))},${Math.floor(this.baseColor[1]*a + 200*(1-a))},${Math.floor(this.baseColor[2]*a + 100*(1-a))})`;
+      ctx.beginPath(); ctx.arc(this.x + p.x, this.y + p.y, Math.max(1, p.r * a), 0, Math.PI * 2); ctx.fill();
+    }
+  }
+}
+
+// ============================================================
+//  КОРОБКА
+// ============================================================
+class Box {
+  constructor(x, y) { this.x = x; this.y = y; this.size = 72; }
+  get rect() {
+    return { left: this.x - 36, top: this.y - 36, right: this.x + 36, bottom: this.y + 36 };
+  }
+  draw(ctx) {
+    const r = this.rect;
+    ctx.fillStyle = "rgb(150,100,50)"; ctx.fillRect(r.left, r.top, 72, 72);
+    ctx.strokeStyle = "rgb(90,55,25)"; ctx.lineWidth = 4;
+    ctx.strokeRect(r.left, r.top, 72, 72);
+    ctx.beginPath(); ctx.moveTo(r.left, this.y); ctx.lineTo(r.right, this.y); ctx.stroke();
+  }
+}
+
+// ============================================================
+//  ЩИТ
+// ============================================================
+class Shield {
+  constructor(x, y) { this.x = x; this.y = y; this.t = 0; this.dead = false; this.radius = 20; }
+  update(dt, player) {
+    this.t += dt; this.y += Math.sin(this.t * 4) * 0.5;
+    if (circlesOverlap(this.x, this.y, this.radius, player.x, player.y, player.radius)) {
+      player.shieldTime = 5.0; this.dead = true;
+    }
+  }
+  draw(ctx) {
+    ctx.fillStyle = "rgb(80,180,255)";
+    ctx.beginPath(); ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "rgb(30,90,160)"; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = "#fff"; ctx.font = "bold 18px Arial";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("SH", this.x, this.y);
+  }
+}
+
+// ============================================================
+//  ИГРОК
+// ============================================================
+class Player extends TankBase {
+  constructor(x, y) {
+    super();
+    this.x = x; this.y = y;
+    this.speed = 260;
+    this.hp = playerHp(); this.maxHp = playerHp();
+    this.shieldTime = 0; this.shootCd = 0;
+    this.radius = 30;
+    this.alive = true; this.dead = false;
+    this.turretAngle = -Math.PI / 2;
+  }
+  update(dt, input, bullets, boxes, enemies, aimX, aimY) {
+    let dx = 0, dy = 0;
+    if (input.left) dx -= 1;
+    if (input.right) dx += 1;
+    if (input.up) dy -= 1;
+    if (input.down) dy += 1;
+    const n = Math.hypot(dx, dy);
+    if (n > 0) { dx /= n; dy /= n; }
+    this.tryMove(dx * this.speed * dt, dy * this.speed * dt, boxes, enemies);
+
+    this.turretAngle = Math.atan2(aimY - this.y, aimX - this.x);
+
+    this.shootCd -= dt;
+    if (input.fire && this.shootCd <= 0) {
+      if (SAVE.laser) {
+        this.shootCd = 0.02;
+      } else {
+        this.shootCd = playerShootCd();
+        const tl = 42;
+        const bx = this.x + Math.cos(this.turretAngle) * tl;
+        const by = this.y + Math.sin(this.turretAngle) * tl;
+        bullets.push(new Bullet(bx, by, Math.cos(this.turretAngle), Math.sin(this.turretAngle), true, playerDamage()));
+      }
+    }
+    if (this.shieldTime > 0) this.shieldTime -= dt;
+  }
+  takeDamage(dmg = 1) {
+    if (this.shieldTime > 0) return;
+    this.hp -= dmg;
+    if (this.hp <= 0) this.alive = false;
+  }
+  draw(ctx) {
+    let body = this.shieldTime > 0 ? "rgb(120,180,255)" : "rgb(60,200,60)";
+    if (SAVE.laser) body = this.shieldTime > 0 ? "rgb(180,120,255)" : "rgb(220,60,80)";
+    ctx.fillStyle = body; ctx.fillRect(this.x - 30, this.y - 30, 60, 60);
+    ctx.fillStyle = "rgb(30,30,30)";
+    ctx.fillRect(this.x - 34, this.y - 26, 8, 52);
+    ctx.fillRect(this.x + 26, this.y - 26, 8, 52);
+    ctx.fillStyle = "rgb(45,160,45)";
+    ctx.beginPath(); ctx.arc(this.x, this.y, 18, 0, Math.PI * 2); ctx.fill();
+    const tx = this.x + Math.cos(this.turretAngle) * 46;
+    const ty = this.y + Math.sin(this.turretAngle) * 46;
+    ctx.strokeStyle = "rgb(30,110,30)"; ctx.lineWidth = 10;
+    ctx.beginPath(); ctx.moveTo(this.x, this.y); ctx.lineTo(tx, ty); ctx.stroke();
+    ctx.fillStyle = "rgb(20,80,20)";
+    ctx.beginPath(); ctx.arc(tx, ty, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "rgb(90,220,90)";
+    ctx.beginPath(); ctx.arc(this.x, this.y, 10, 0, Math.PI * 2); ctx.fill();
+    if (this.shieldTime > 0) {
+      ctx.strokeStyle = "rgb(80,180,255)"; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(this.x, this.y, this.radius + 6, 0, Math.PI * 2); ctx.stroke();
+    }
+  }
+}
+
+// ============================================================
+//  ВРАГ
+// ============================================================
+class Enemy extends TankBase {
+  constructor(x, y, hp, speed, cooldown) {
+    super();
+    this.x = x; this.y = y;
+    this.hp = hp; this.maxHp = hp;
+    this.speed = speed;
+    this.shootCd = 0; this.cooldown = cooldown;
+    this.dead = false; this.alive = true;
+    this.radius = 26; this.turretAngle = Math.PI / 2;
+  }
+  isBoss() { return false; }
+  update(dt, player, bullets, boxes, otherEnemies) {
+    if (!player.alive) return;
+    const dx = player.x - this.x, dy = player.y - this.y;
+    const n = Math.hypot(dx, dy) || 1;
+    let dirX = dx / n, dirY = dy / n;
+    const la = 60;
+    if (this._blockedByBoxes(this.x + dirX * la, this.y + dirY * la, boxes)) {
+      const base = Math.atan2(dirY, dirX);
+      for (const off of [0.5, -0.5, 1.0, -1.0, 1.5, -1.5]) {
+        const ang = base + off;
+        if (!this._blockedByBoxes(this.x + Math.cos(ang) * la, this.y + Math.sin(ang) * la, boxes)) {
+          dirX = Math.cos(ang); dirY = Math.sin(ang); break;
+        }
+      }
+    }
+    this.tryMove(dirX * this.speed * dt, dirY * this.speed * dt, boxes, otherEnemies.concat([player]));
+    if (this.x <= this.radius + 2 || this.x >= WIDTH - this.radius - 2 ||
+        this.y <= this.radius + 2 || this.y >= HEIGHT - this.radius - 2) {
+      const cdx = WIDTH / 2 - this.x, cdy = HEIGHT / 2 - this.y;
+      const cn = Math.hypot(cdx, cdy) || 1;
+      this.tryMove(cdx / cn * this.speed * dt, cdy / cn * this.speed * dt, boxes, otherEnemies.concat([player]));
+    }
+    this.turretAngle = Math.atan2(player.y - this.y, player.x - this.x);
+    this.shootCd -= dt;
+    if (this.shootCd <= 0) {
+      this.shootCd = this.cooldown;
+      const tl = 30;
+      const bx = this.x + Math.cos(this.turretAngle) * tl;
+      const by = this.y + Math.sin(this.turretAngle) * tl;
+      bullets.push(new Bullet(bx, by, Math.cos(this.turretAngle), Math.sin(this.turretAngle), false));
+    }
+  }
+  takeDamage(dmg) { this.hp -= dmg; if (this.hp <= 0) this.dead = true; }
+  draw(ctx) {
+    ctx.fillStyle = "rgb(215,75,75)";
+    ctx.fillRect(this.x - 26, this.y - 26, 52, 52);
+    ctx.fillStyle = "rgb(80,20,20)";
+    ctx.fillRect(this.x - 30, this.y - 22, 6, 44);
+    ctx.fillRect(this.x + 24, this.y - 22, 6, 44);
+    ctx.fillStyle = "rgb(170,50,50)";
+    ctx.beginPath(); ctx.arc(this.x, this.y, 14, 0, Math.PI * 2); ctx.fill();
+    const tx = this.x + Math.cos(this.turretAngle) * 34;
+    const ty = this.y + Math.sin(this.turretAngle) * 34;
+    ctx.strokeStyle = "rgb(120,30,30)"; ctx.lineWidth = 8;
+    ctx.beginPath(); ctx.moveTo(this.x, this.y); ctx.lineTo(tx, ty); ctx.stroke();
+    if (this.hp < this.maxHp) {
+      const ratio = Math.max(0, this.hp / this.maxHp);
+      ctx.fillStyle = "rgb(60,0,0)";
+      ctx.fillRect(this.x - 26, this.y - 42, 52, 6);
+      ctx.fillStyle = "rgb(220,60,60)";
+      ctx.fillRect(this.x - 26, this.y - 42, 52 * ratio, 6);
+    }
+  }
+}
+
+// ============================================================
+//  МИНИ-БОСС
+// ============================================================
+class MiniBoss extends TankBase {
+  constructor(x, y, variant) {
+    super();
+    this.x = x; this.y = y;
+    this.variant = variant;
+    this.t = 0; this.cd = 0;
+    this.maxHp = variant === "guardian" ? 30 : 20;
+    this.hp = this.maxHp;
+    this.dead = false; this.alive = true;
+    this.radius = 48; this.turretAngle = Math.PI / 2;
+  }
+  isBoss() { return true; }
+  update(dt, player, bullets, boxes, otherEnemies) {
+    this.t += dt;
+    const targetX = WIDTH * 0.5 + Math.sin(this.t * 0.8) * (WIDTH * 0.4);
+    const targetY = HEIGHT * 0.2 + Math.sin(this.t * 1.3) * (HEIGHT * 0.15);
+    let dx = targetX - this.x, dy = targetY - this.y;
+    const d = Math.hypot(dx, dy) || 1;
+    let dirX = dx / d, dirY = dy / d;
+    const la = 90;
+    if (boxes && this._blockedByBoxes(this.x + dirX * la, this.y + dirY * la, boxes)) {
+      const base = Math.atan2(dirY, dirX);
+      for (const off of [0.5, -0.5, 1.0, -1.0, 1.5, -1.5]) {
+        const ang = base + off;
+        if (!this._blockedByBoxes(this.x + Math.cos(ang) * la, this.y + Math.sin(ang) * la, boxes)) {
+          dirX = Math.cos(ang); dirY = Math.sin(ang); break;
+        }
+      }
+    }
+    const speed = 130;
+    this.tryMove(dirX * speed * dt, dirY * speed * dt, boxes, otherEnemies || []);
+    if (player.alive) this.turretAngle = Math.atan2(player.y - this.y, player.x - this.x);
+    this.cd -= dt;
+    if (this.cd <= 0 && player.alive) {
+      if (this.variant === "guardian") {
+        this.cd = 1.4;
+        const dx2 = player.x - this.x, dy2 = player.y - this.y;
+        for (const a of [-0.35, 0, 0.35]) {
+          const ca = Math.cos(a), sa = Math.sin(a);
+          bullets.push(new Bullet(this.x, this.y, dx2 * ca - dy2 * sa, dx2 * sa + dy2 * ca, false));
+        }
+      } else {
+        this.cd = 0.9;
+        const dx2 = player.x - this.x, dy2 = player.y - this.y;
+        for (let i = 0; i < 3; i++) bullets.push(new Bullet(this.x, this.y, dx2, dy2, false));
+      }
+    }
+  }
+  takeDamage(dmg) { this.hp -= dmg; if (this.hp <= 0) this.dead = true; }
+  draw(ctx) {
+    const color = this.variant === "guardian" ? "rgb(230,180,25)" : "rgb(25,180,230)";
+    ctx.fillStyle = color; ctx.fillRect(this.x - 55, this.y - 55, 110, 110);
+    ctx.strokeStyle = this.variant === "guardian" ? "rgb(60,40,0)" : "rgb(0,40,70)";
+    ctx.lineWidth = 4; ctx.strokeRect(this.x - 55, this.y - 55, 110, 110);
+    ctx.fillStyle = "#000";
+    ctx.beginPath(); ctx.arc(this.x, this.y, 16, 0, Math.PI * 2); ctx.fill();
+    const tx = this.x + Math.cos(this.turretAngle) * 70;
+    const ty = this.y + Math.sin(this.turretAngle) * 70;
+    ctx.strokeStyle = "#000"; ctx.lineWidth = 12;
+    ctx.beginPath(); ctx.moveTo(this.x, this.y); ctx.lineTo(tx, ty); ctx.stroke();
+    const ratio = Math.max(0, this.hp / this.maxHp);
+    ctx.fillStyle = "rgb(100,0,0)"; ctx.fillRect(this.x - 55, this.y - 75, 110, 8);
+    ctx.fillStyle = "rgb(0,200,0)"; ctx.fillRect(this.x - 55, this.y - 75, 110 * ratio, 8);
+  }
+}
+
+// ============================================================
+//  БЛИЗНЕЦЫ
+// ============================================================
+class TwinBoss extends TankBase {
+  constructor(x, y, variant) {
+    super();
+    this.x = x; this.y = y;
+    this.variant = variant;
+    this.t = 0; this.cd = 0;
+    this.maxHp = 40; this.hp = 40;
+    this.enraged = false;
+    this.dead = false; this.alive = true;
+    this.radius = 52; this.turretAngle = Math.PI / 2;
+  }
+  isBoss() { return true; }
+  update(dt, player, bullets) {
+    this.t += dt;
+    const speed = this.enraged ? 140 : 90;
+    const halfW = WIDTH / 2;
+    let targetX, targetY;
+    if (this.variant === "left") targetX = halfW * 0.5 + Math.sin(this.t * 0.7) * (halfW * 0.45);
+    else targetX = halfW * 1.5 + Math.sin(this.t * 0.7 + Math.PI) * (halfW * 0.45);
+    targetY = HEIGHT * 0.25 + Math.sin(this.t * 0.9) * (HEIGHT * 0.2);
+    const dx = targetX - this.x, dy = targetY - this.y;
+    const d = Math.hypot(dx, dy) || 1;
+    this.x += dx / d * speed * dt;
+    this.y += dy / d * speed * dt;
+    if (player.alive) this.turretAngle = Math.atan2(player.y - this.y, player.x - this.x);
+    this.cd -= dt;
+    const cooldown = this.enraged ? 0.7 : 1.1;
+    if (this.cd <= 0 && player.alive) {
+      this.cd = cooldown;
+      const pdx = player.x - this.x, pdy = player.y - this.y;
+      if (this.enraged) {
+        for (const a of [-0.5, -0.25, 0, 0.25, 0.5]) {
+          const ca = Math.cos(a), sa = Math.sin(a);
+          bullets.push(new Bullet(this.x, this.y, pdx * ca - pdy * sa, pdx * sa + pdy * ca, false, 2));
+        }
+      } else {
+        for (const a of [-0.2, 0.2]) {
+          const ca = Math.cos(a), sa = Math.sin(a);
+          bullets.push(new Bullet(this.x, this.y, pdx * ca - pdy * sa, pdx * sa + pdy * ca, false));
+        }
+      }
+    }
+  }
+  takeDamage(dmg, allEnemies) {
+    this.hp -= dmg;
+    if (this.hp <= 0) {
+      this.dead = true;
+      if (allEnemies) for (const e of allEnemies) {
+        if (e instanceof TwinBoss && e !== this && !e.dead) e.goEnraged();
+      }
+    }
+  }
+  goEnraged() { this.enraged = true; this.hp = Math.floor(this.maxHp * 1.5); this.maxHp = this.hp; }
+  draw(ctx) {
+    let col = this.variant === "left" ? "rgb(180,25,180)" : "rgb(230,100,30)";
+    if (this.enraged) col = "rgb(255,60,60)";
+    ctx.fillStyle = col; ctx.fillRect(this.x - 60, this.y - 60, 120, 120);
+    ctx.strokeStyle = "#000"; ctx.lineWidth = 4; ctx.strokeRect(this.x - 60, this.y - 60, 120, 120);
+    ctx.fillStyle = "rgb(255,0,0)";
+    ctx.beginPath(); ctx.arc(this.x - 25, this.y - 5, 12, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(this.x + 25, this.y - 5, 12, 0, Math.PI * 2); ctx.fill();
+    const tx = this.x + Math.cos(this.turretAngle) * 74;
+    const ty = this.y + Math.sin(this.turretAngle) * 74;
+    ctx.strokeStyle = "#000"; ctx.lineWidth = 12;
+    ctx.beginPath(); ctx.moveTo(this.x, this.y); ctx.lineTo(tx, ty); ctx.stroke();
+    const ratio = Math.max(0, this.hp / this.maxHp);
+    ctx.fillStyle = "rgb(100,0,0)"; ctx.fillRect(this.x - 60, this.y - 80, 120, 8);
+    ctx.fillStyle = "rgb(0,200,0)"; ctx.fillRect(this.x - 60, this.y - 80, 120 * ratio, 8);
+  }
+}
+
+// ============================================================
+//  ПАУК
+// ============================================================
+class SpiderBoss extends TankBase {
+  constructor(x, y) {
+    super();
+    this.x = x; this.y = y;
+    this.t = 0; this.shootCd = 0;
+    this.teleportCd = 3.0; this.summonCd = 8.0;
+    this.phase = 0;
+    this.maxHp = 100; this.hp = 100;
+    this.dead = false; this.alive = true;
+    this.radius = 62; this.turretAngle = 0;
+    this._target = [x, y]; this._targetTimer = 0;
+  }
+  isBoss() { return true; }
+  update(dt, player, bullets, enemies, boxes) {
+    this.t += dt;
+    this.shootCd -= dt; this.teleportCd -= dt; this.summonCd -= dt; this._targetTimer -= dt;
+    if (this.phase === 0 && this.hp < this.maxHp * 0.66) this.phase = 1;
+    else if (this.phase === 1 && this.hp < this.maxHp * 0.33) this.phase = 2;
+    if (this._targetTimer <= 0) {
+      this._targetTimer = 2.0;
+      this._target = [150 + Math.random() * (WIDTH - 300), 150 + Math.random() * (HEIGHT - 450)];
+    }
+    const driftSpeed = 110 + this.phase * 30;
+    const [tx, ty] = this._target;
+    const dx = tx - this.x, dy = ty - this.y;
+    const d = Math.hypot(dx, dy) || 1;
+    this.x += dx / d * driftSpeed * dt;
+    this.y += dy / d * driftSpeed * dt;
+    if (this.teleportCd <= 0) {
+      this.teleportCd = Math.max(1.2, 3.0 - this.phase * 0.7);
+      this._teleport(bullets);
+    }
+    if (this.shootCd <= 0 && player.alive) {
+      this.shootCd = Math.max(0.5, 1.6 - this.phase * 0.4);
+      this._shoot(player, bullets);
+    }
+    if (this.phase >= 1 && this.summonCd <= 0) {
+      this.summonCd = 7.0;
+      this._summon(enemies);
+    }
+  }
+  _teleport(bullets) {
+    const old = [this.x, this.y];
+    this.x = 120 + Math.random() * (WIDTH - 240);
+    this.y = 150 + Math.random() * (HEIGHT - 500);
+    this._target = [this.x, this.y];
+    this._targetTimer = 2.0;
+    for (let i = 0; i < 6; i++) {
+      const a = Math.PI * 2 * i / 6;
+      bullets.push(new Bullet(old[0], old[1], Math.cos(a), Math.sin(a), false));
+    }
+  }
+  _shoot(player, bullets) {
+    const dx = player.x - this.x, dy = player.y - this.y;
+    const n = Math.hypot(dx, dy) || 1;
+    const ux = dx / n, uy = dy / n;
+    if (this.phase === 0) {
+      for (const d of [[0,-1],[0,1],[-1,0],[1,0]]) bullets.push(new Bullet(this.x, this.y, d[0], d[1], false));
+    } else if (this.phase === 1) {
+      for (const d of [[0,-1],[0,1],[-1,0],[1,0]]) bullets.push(new Bullet(this.x, this.y, d[0], d[1], false));
+      bullets.push(new Bullet(this.x, this.y, ux, uy, false, 2));
+    } else {
+      for (let i = 0; i < 10; i++) {
+        const a = Math.PI * 2 * i / 10 + this.t;
+        bullets.push(new Bullet(this.x, this.y, Math.cos(a), Math.sin(a), false));
+      }
+    }
+  }
+  _summon(enemies) {
+    for (let i = 0; i < 2 + this.phase; i++) {
+      const a = Math.PI * 2 * i / (2 + this.phase);
+      const x = this.x + Math.cos(a) * 100;
+      const y = this.y + Math.sin(a) * 100;
+      enemies.push(new Enemy(x, y, 1, 140, 2.0));
+    }
+  }
+  takeDamage(dmg) { this.hp -= dmg; if (this.hp <= 0) this.dead = true; }
+  draw(ctx) {
+    let col = "rgb(40,40,55)";
+    if (this.phase === 1) col = "rgb(60,40,70)";
+    if (this.phase === 2) col = "rgb(80,30,90)";
+    ctx.strokeStyle = "rgb(20,20,30)"; ctx.lineWidth = 8;
+    for (let i = 0; i < 8; i++) {
+      const a = Math.PI * 2 * i / 8;
+      ctx.beginPath();
+      ctx.moveTo(this.x, this.y);
+      ctx.lineTo(this.x + Math.cos(a) * 90, this.y + Math.sin(a) * 90);
+      ctx.stroke();
+    }
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(this.x, this.y, 60, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "rgb(10,10,15)"; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.arc(this.x, this.y, 60, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = "rgb(255,50,50)";
+    for (let i = 0; i < 8; i++) {
+      const a = Math.PI * 2 * i / 8;
+      ctx.beginPath();
+      ctx.arc(this.x + Math.cos(a) * 45, this.y + Math.sin(a) * 45, 7, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const ratio = Math.max(0, this.hp / this.maxHp);
+    ctx.fillStyle = "rgb(100,0,0)"; ctx.fillRect(this.x - 70, this.y - 90, 140, 10);
+    ctx.fillStyle = "rgb(0,200,0)"; ctx.fillRect(this.x - 70, this.y - 90, 140 * ratio, 10);
+  }
+}
+
+// ============================================================
+//  ИГРА
+// ============================================================
+class Game {
+  constructor() {
+    this.state = "menu";
+    this.currentLevel = 1;
+    this.score = 0;
+    this.player = null;
+    this.enemies = []; this.bullets = []; this.boxes = [];
+    this.shields = []; this.explosions = []; this.lasers = [];
+    this.bossType = "";
+    this.levelClearedTimer = 0;
+    this.waitingNext = false;
+    this.lastLaserHit = {};
+    this.aimX = WIDTH / 2; this.aimY = 0;
+  }
+
+  startLevel(level) {
+    this.currentLevel = level;
+    this.state = "playing";
+    this.bullets = []; this.enemies = []; this.boxes = [];
+    this.shields = []; this.explosions = []; this.lasers = [];
+    this.bossType = "";
+    this.waitingNext = false; this.levelClearedTimer = 0;
+    this.lastLaserHit = {};
+
+    this.player = new Player(WIDTH / 2, HEIGHT - 120);
+
+    const boxCount = 3 + Math.min(5, Math.floor(level / 8));
+    for (let i = 0; i < boxCount; i++) {
+      for (let a = 0; a < 30; a++) {
+        const bx = 120 + Math.random() * (WIDTH - 240);
+        const by = 150 + Math.random() * (HEIGHT - 400);
+        if (Math.hypot(bx - this.player.x, by - this.player.y) < 200) continue;
+        let ok = true;
+        for (const b of this.boxes) if (Math.hypot(bx - b.x, by - b.y) < 160) { ok = false; break; }
+        if (ok) { this.boxes.push(new Box(bx, by)); break; }
+      }
+    }
+
+    let enemyCount = 2 + Math.floor(level * 0.6);
+    if ([10,15,20,25,30,35,40,45,50].includes(level)) enemyCount = Math.max(1, Math.floor(enemyCount / 3));
+    for (let i = 0; i < enemyCount; i++) {
+      for (let a = 0; a < 30; a++) {
+        const x = 100 + Math.random() * (WIDTH - 200);
+        const y = 100 + Math.random() * (HEIGHT / 2 - 100);
+        let bad = false;
+        for (const b of this.boxes) if (Math.hypot(x - b.x, y - b.y) < 120) { bad = true; break; }
+        if (!bad) {
+          const hp = 1 + Math.floor(level / 8);
+          const speed = 55 + level * 5;
+          const cooldown = Math.max(0.35, 1.6 - level * 0.025);
+          this.enemies.push(new Enemy(x, y, hp, speed, cooldown));
+          break;
+        }
+      }
+    }
+
+    if ([10,20,30,40,45].includes(level)) {
+      const variant = (level % 20 === 10) ? "guardian" : "gunner";
+      this.enemies.push(new MiniBoss(WIDTH / 2, 180, variant));
+    } else if (level === 50) {
+      if (Math.random() < 0.5) {
+        this.bossType = "twin";
+        this.enemies.push(new TwinBoss(WIDTH * 0.35, 200, "left"));
+        this.enemies.push(new TwinBoss(WIDTH * 0.65, 200, "right"));
+      } else {
+        this.bossType = "spider";
+        this.enemies.push(new SpiderBoss(WIDTH / 2, 220));
+      }
+    } else if ([15,25,35].includes(level)) {
+      this.enemies.push(new MiniBoss(WIDTH / 2, 180, "gunner"));
+      this.enemies.push(new MiniBoss(WIDTH / 3, 260, "guardian"));
+    }
+  }
+
+  enemyReward(e) {
+    if (e instanceof SpiderBoss) return 700;
+    if (e instanceof TwinBoss) return 400;
+    if (e instanceof MiniBoss) return 170;
+    return 35 + this.currentLevel * 2;
+  }
+
+  update(dt, input) {
+    if (this.state !== "playing") return;
+    if (this.waitingNext) {
+      this.levelClearedTimer -= dt;
+      if (this.levelClearedTimer <= 0) this.goNext();
+      return;
+    }
+    this.player.update(dt, input, this.bullets, this.boxes, this.enemies, this.aimX, this.aimY);
+
+    if (SAVE.laser && this.player.alive && input.fire) this.fireLaser(dt);
+
+    for (const e of this.enemies) {
+      if (e instanceof SpiderBoss) e.update(dt, this.player, this.bullets, this.enemies, this.boxes);
+      else if (e instanceof MiniBoss) e.update(dt, this.player, this.bullets, this.boxes, this.enemies);
+      else if (e instanceof TwinBoss) e.update(dt, this.player, this.bullets);
+      else e.update(dt, this.player, this.bullets, this.boxes, this.enemies.filter(x => x !== e));
+    }
+
+    const allTanks = [this.player, ...this.enemies.filter(e => !e.dead)];
+    for (let i = 0; i < allTanks.length; i++) {
+      for (let j = i + 1; j < allTanks.length; j++) {
+        const a = allTanks[i], b = allTanks[j];
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const d = Math.hypot(dx, dy) || 0.001;
+        const minD = a.radius + b.radius;
+        if (d < minD) {
+          const ov = (minD - d) * 0.5;
+          const nx = dx / d, ny = dy / d;
+          a.tryMove(-nx * ov * 3, -ny * ov * 3, this.boxes, [b]);
+          b.tryMove(nx * ov * 3, ny * ov * 3, this.boxes, [a]);
+        }
+      }
+    }
+
+    for (const b of this.bullets) {
+      b.update(dt);
+      if (b.dead) continue;
+      for (const box of this.boxes) {
+        if (circleRectOverlap(b.x, b.y, b.radius, box.rect)) {
+          this.explosions.push(new Explosion(b.x, b.y, [255, 200, 80], 0.5, 8));
+          b.dead = true; break;
+        }
+      }
+      if (b.dead) continue;
+      if (!b.fromPlayer && this.player.alive) {
+        if (circlesOverlap(b.x, b.y, b.radius, this.player.x, this.player.y, this.player.radius)) {
+          this.player.takeDamage(b.damage);
+          if (this.player.shieldTime <= 0) this.explosions.push(new Explosion(b.x, b.y, [255, 80, 80], 0.8, 12));
+          else this.explosions.push(new Explosion(b.x, b.y, [120, 200, 255], 0.6, 10));
+          b.dead = true; continue;
+        }
+      }
+      if (b.fromPlayer) {
+        for (const e of this.enemies) {
+          if (e.dead) continue;
+          if (circlesOverlap(b.x, b.y, b.radius, e.x, e.y, e.radius)) {
+            if (e instanceof TwinBoss || e instanceof SpiderBoss) e.takeDamage(b.damage, this.enemies);
+            else e.takeDamage(b.damage);
+            b.dead = true; break;
+          }
+        }
+      }
+    }
+
+    for (const s of this.shields) s.update(dt, this.player);
+    for (const ex of this.explosions) ex.update(dt);
+    this.explosions = this.explosions.filter(ex => !ex.dead);
+    for (const lz of this.lasers) lz.update(dt);
+    this.lasers = this.lasers.filter(lz => !lz.dead);
+
+    const killed = this.enemies.filter(e => e.dead);
+    for (const e of killed) {
+      this.score += this.enemyReward(e);
+      if (Math.random() < 0.25 && !(e instanceof TwinBoss || e instanceof SpiderBoss || e instanceof MiniBoss)) {
+        this.shields.push(new Shield(e.x, e.y));
+      }
+      if (e instanceof SpiderBoss) {
+        this.explosions.push(new Explosion(e.x, e.y, [255,100,40], 2.5, 40));
+        this.explosions.push(new Explosion(e.x, e.y, [200,50,220], 1.8, 30));
+      } else if (e instanceof TwinBoss) {
+        const col = e.enraged ? [255,60,60] : [255,160,60];
+        this.explosions.push(new Explosion(e.x, e.y, col, 2.0, 32));
+      } else if (e instanceof MiniBoss) {
+        this.explosions.push(new Explosion(e.x, e.y, [255,200,80], 1.5, 26));
+      } else {
+        this.explosions.push(new Explosion(e.x, e.y, [255,140,60], 1.0, 16));
+      }
+    }
+
+    this.enemies = this.enemies.filter(e => !e.dead);
+    this.bullets = this.bullets.filter(b => !b.dead);
+    this.shields = this.shields.filter(s => !s.dead);
+
+    if (this.enemies.length === 0 && this.player.alive) {
+      this.waitingNext = true;
+      this.levelClearedTimer = 1.0;
+      SAVE.completed[String(this.currentLevel)] = true;
+      if (this.currentLevel + 1 > SAVE.unlocked && this.currentLevel < LEVELS) {
+        SAVE.unlocked = this.currentLevel + 1;
+      }
+      if (this.score > SAVE.best) SAVE.best = this.score;
+      if (this.currentLevel === LEVELS) {
+        if (this.bossType === "twin") SAVE.bosses.twin = true;
+        else if (this.bossType === "spider") SAVE.bosses.spider = true;
+      }
+      SAVE.bank += this.score;
+      writeSave();
+    }
+
+    if (!this.player.alive) this.state = "menu";
+  }
+
+  fireLaser(dt) {
+    const p = this.player;
+    const x1 = p.x + Math.cos(p.turretAngle) * 42;
+    const y1 = p.y + Math.sin(p.turretAngle) * 42;
+    const dx = Math.cos(p.turretAngle), dy = Math.sin(p.turretAngle);
+    let maxLen = 480;
+    for (const box of this.boxes) {
+      const h = rayRectHit(x1, y1, dx, dy, box.rect);
+      if (h !== null && h < maxLen) maxLen = h;
+    }
+    let hitE = null;
+    let hitDist = maxLen;
+    for (const e of this.enemies) {
+      if (e.dead) continue;
+      const vx = e.x - x1, vy = e.y - y1;
+      const proj = vx * dx + vy * dy;
+      if (proj <= 0 || proj > hitDist) continue;
+      const perp = Math.hypot(vx - dx * proj, vy - dy * proj);
+      if (perp <= e.radius) { hitDist = proj; hitE = e; }
+    }
+    const x2 = x1 + dx * hitDist;
+    const y2 = y1 + dy * hitDist;
+    this.lasers.push(new LaserBeam(x1, y1, x2, y2));
+    if (hitE) {
+      const key = this.enemies.indexOf(hitE);
+      let cd = this.lastLaserHit[key] || 0;
+      cd -= dt;
+      if (cd <= 0) {
+        const dmg = Math.max(1, Math.floor(playerDamage() / 2));
+        if (hitE instanceof TwinBoss || hitE instanceof SpiderBoss) hitE.takeDamage(dmg, this.enemies);
+        else hitE.takeDamage(dmg);
+        cd = 0.15;
+      }
+      this.lastLaserHit[key] = cd;
+    }
+  }
+
+  goNext() {
+    if (this.currentLevel >= LEVELS) this.state = "victory";
+    else this.state = "shop";
+  }
+
+  nextLevel() {
+    if (this.currentLevel >= LEVELS) this.state = "victory";
+    else this.startLevel(this.currentLevel + 1);
+  }
+
+  draw(ctx) {
+    ctx.fillStyle = "rgb(35,45,35)";
+    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+    if (this.state === "playing") this.drawPlaying(ctx);
+  }
+
+  drawPlaying(ctx) {
+    for (const b of this.boxes) b.draw(ctx);
+    for (const s of this.shields) s.draw(ctx);
+    if (this.player) this.player.draw(ctx);
+    for (const e of this.enemies) e.draw(ctx);
+    for (const b of this.bullets) b.draw(ctx);
+    for (const lz of this.lasers) lz.draw(ctx);
+    for (const ex of this.explosions) ex.draw(ctx);
+
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(this.aimX, this.aimY, 14, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(this.aimX - 20, this.aimY); ctx.lineTo(this.aimX - 6, this.aimY); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(this.aimX + 6, this.aimY); ctx.lineTo(this.aimX + 20, this.aimY); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(this.aimX, this.aimY - 20); ctx.lineTo(this.aimX, this.aimY - 6); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(this.aimX, this.aimY + 6); ctx.lineTo(this.aimX, this.aimY + 20); ctx.stroke();
+
+    ctx.fillStyle = "#fff"; ctx.font = "bold 26px Arial";
+    ctx.textAlign = "left"; ctx.textBaseline = "top";
+    ctx.fillText(`Уровень ${this.currentLevel}/${LEVELS}   Очки: ${this.score}`, 20, 20);
+    ctx.fillStyle = "#ff6666";
+    ctx.fillText(`HP: ${this.player.hp}/${this.player.maxHp}`, 20, 60);
+    ctx.fillStyle = "#aaaaff"; ctx.font = "18px Arial";
+    ctx.fillText(`Урон: ${playerDamage()}   Перезарядка: ${playerShootCd().toFixed(2)}с${SAVE.laser ? "   ЛАЗЕР" : ""}`, 20, 100);
+
+    if (this.player.shieldTime > 0) {
+      ctx.fillStyle = "#78c8ff"; ctx.font = "18px Arial";
+      ctx.fillText(`SHIELD ${this.player.shieldTime.toFixed(1)}s`, 20, 130);
+    }
+
+    const bosses = this.enemies.filter(e => e.isBoss());
+    if (bosses.length > 0) {
+      const total = bosses.reduce((a, b) => a + Math.max(0, b.hp), 0);
+      const totalMax = bosses.reduce((a, b) => a + b.maxHp, 0);
+      let name = "БОСС";
+      if (this.bossType === "twin") name = "БЛИЗНЕЦЫ";
+      else if (this.bossType === "spider") name = "ПАУК";
+      ctx.fillStyle = "#ff5050"; ctx.font = "18px Arial";
+      ctx.fillText(`${name}: ${total}/${totalMax}`, 20, 160);
+      const w = 500;
+      ctx.fillStyle = "rgb(80,0,0)"; ctx.fillRect(20, 190, w, 18);
+      ctx.fillStyle = "rgb(220,40,40)"; ctx.fillRect(20, 190, w * (total / Math.max(1, totalMax)), 18);
+      ctx.strokeStyle = "rgb(20,20,20)"; ctx.lineWidth = 2; ctx.strokeRect(20, 190, w, 18);
+    }
+
+    if (this.waitingNext) {
+      ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(0, 0, WIDTH, HEIGHT);
+      ctx.fillStyle = "#ffff66"; ctx.font = "bold 54px Arial";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      const msg = this.currentLevel < LEVELS ? "УРОВЕНЬ ПРОЙДЕН!" : "ПОБЕДА!";
+      ctx.fillText(msg, WIDTH / 2, HEIGHT / 2);
+    }
+  }
+}
+
+// ============================================================
+//  CANVAS
+// ============================================================
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+function resize() {
+  canvas.width = WIDTH;
+  canvas.height = HEIGHT;
+  const scale = Math.min(window.innerWidth / WIDTH, window.innerHeight / HEIGHT);
+  canvas.style.width = (WIDTH * scale) + "px";
+  canvas.style.height = (HEIGHT * scale) + "px";
+}
+window.addEventListener("resize", resize);
+resize();
+
+const game = new Game();
+
+// ============================================================
+//  УПРАВЛЕНИЕ
+// ============================================================
+const input = { left: false, right: false, up: false, down: false, fire: false };
+
+window.addEventListener("keydown", e => {
+  if (e.code === "ArrowLeft"  || e.code === "KeyA") input.left  = true;
+  if (e.code === "ArrowRight" || e.code === "KeyD") input.right = true;
+  if (e.code === "ArrowUp"    || e.code === "KeyW") input.up    = true;
+  if (e.code === "ArrowDown"  || e.code === "KeyS") input.down  = true;
+  if (e.code === "Space" || e.code === "KeyF")      input.fire  = true;
+  if (e.code === "Enter") handleEnter();
+});
+window.addEventListener("keyup", e => {
+  if (e.code === "ArrowLeft"  || e.code === "KeyA") input.left  = false;
+  if (e.code === "ArrowRight" || e.code === "KeyD") input.right = false;
+  if (e.code === "ArrowUp"    || e.code === "KeyW") input.up    = false;
+  if (e.code === "ArrowDown"  || e.code === "KeyS") input.down  = false;
+  if (e.code === "Space" || e.code === "KeyF")      input.fire  = false;
+});
+
+canvas.addEventListener("mousemove", e => {
+  const r = canvas.getBoundingClientRect();
+  game.aimX = (e.clientX - r.left) / r.width  * WIDTH;
+  game.aimY = (e.clientY - r.top)  / r.height * HEIGHT;
+});
+canvas.addEventListener("mousedown", e => {
+  if (e.button === 0) {
+    input.fire = true;
+    const r = canvas.getBoundingClientRect();
+    game.aimX = (e.clientX - r.left) / r.width  * WIDTH;
+    game.aimY = (e.clientY - r.top)  / r.height * HEIGHT;
+  }
+});
+canvas.addEventListener("mouseup", e => { if (e.button === 0) input.fire = false; });
+canvas.addEventListener("contextmenu", e => e.preventDefault());
+
+// ============================================================
+//  ТАЧ-УПРАВЛЕНИЕ
+// ============================================================
+const joystick = document.getElementById("joystick");
+const knob     = document.getElementById("joystick-knob");
+const fireBtn  = document.getElementById("fire-btn");
+
+let joystickTouchId = null;
+let joystickCenter = { x: 0, y: 0 };
+let fireTouchId = null;
+
+function showTouchControls() {
+  joystick.style.display = "block";
+  fireBtn.style.display  = "flex";
+}
+
+function onTouchStart(e) {
+  for (const t of e.changedTouches) {
+    const x = t.clientX, y = t.clientY;
+    if (x < window.innerWidth / 2) {
+      if (joystickTouchId === null) {
+        joystickTouchId = t.identifier;
+        joystickCenter = { x, y };
+        joystick.style.left = (x - 80) + "px";
+        joystick.style.top  = (y - 80) + "px";
+        joystick.style.bottom = "auto";
+      }
+    } else {
+      if (fireTouchId === null) {
+        fireTouchId = t.identifier;
+        input.fire = true;
+        fireBtn.classList.add("active");
+      }
+      const r = canvas.getBoundingClientRect();
+      game.aimX = (x - r.left) / r.width  * WIDTH;
+      game.aimY = (y - r.top)  / r.height * HEIGHT;
+    }
+  }
+}
+function onTouchMove(e) {
+  for (const t of e.changedTouches) {
+    if (t.identifier === joystickTouchId) {
+      let dx = t.clientX - joystickCenter.x;
+      let dy = t.clientY - joystickCenter.y;
+      const n = Math.hypot(dx, dy);
+      const maxR = 60;
+      if (n > maxR) { dx = dx / n * maxR; dy = dy / n * maxR; }
+      knob.style.transform = `translate(${dx}px, ${dy}px)`;
+      input.left  = dx < -15;
+      input.right = dx >  15;
+      input.up    = dy < -15;
+      input.down  = dy >  15;
+    } else if (t.identifier === fireTouchId) {
+      const r = canvas.getBoundingClientRect();
+      game.aimX = (t.clientX - r.left) / r.width  * WIDTH;
+      game.aimY = (t.clientY - r.top)  / r.height * HEIGHT;
+    }
+  }
+}
+function onTouchEnd(e) {
+  for (const t of e.changedTouches) {
+    if (t.identifier === joystickTouchId) {
+      joystickTouchId = null;
+      knob.style.transform = "translate(0, 0)";
+      input.left = input.right = input.up = input.down = false;
+    }
+    if (t.identifier === fireTouchId) {
+      fireTouchId = null;
+      input.fire = false;
+      fireBtn.classList.remove("active");
+    }
+  }
+}
+
+window.addEventListener("touchstart", onTouchStart, { passive: false });
+window.addEventListener("touchmove",  onTouchMove,  { passive: false });
+window.addEventListener("touchend",   onTouchEnd,   { passive: false });
+window.addEventListener("touchcancel",onTouchEnd,   { passive: false });
+
+if ("ontouchstart" in window) showTouchControls();
+
+// ============================================================
+//  МЕНЮ
+// ============================================================
+const menuEl     = document.getElementById("menu");
+const menuContent = document.getElementById("menu-content");
+const infoEl     = document.getElementById("info");
+
+function updateInfo() {
+  infoEl.textContent = `💰 Очки: ${SAVE.bank} · 🏆 Рекорд: ${SAVE.best}`;
+}
+
+function showMenu() {
+  game.state = "menu";
+  menuEl.classList.remove("hidden");
+  updateInfo();
+  renderMenuContent();
+}
+
+function renderMenuContent() {
+  menuContent.innerHTML = "";
+
+  const grid = document.createElement("div");
+  grid.className = "levels";
+  for (let i = 1; i <= LEVELS; i++) {
+    const btn = document.createElement("button");
+    btn.textContent = SAVE.completed[String(i)] ? "✓" + i : String(i);
+    if (i > SAVE.unlocked) {
+      btn.classList.add("locked");
+      btn.textContent = "🔒";
+      btn.disabled = true;
+    } else {
+      if (SAVE.completed[String(i)]) btn.classList.add("done");
+      if (i === LEVELS) btn.classList.add("boss");
+      else if ([10,20,30,40,45].includes(i)) btn.classList.add("midboss");
+      btn.onclick = () => { menuEl.classList.add("hidden"); game.startLevel(i); };
+    }
+    grid.appendChild(btn);
+  }
+  menuContent.appendChild(grid);
+
+  const row = document.createElement("div");
+  row.className = "row";
+
+  const shopBtn = document.createElement("button");
+  shopBtn.className = "big";
+  shopBtn.textContent = "🛒 Магазин";
+  shopBtn.onclick = () => showShop();
+  row.appendChild(shopBtn);
+
+  const resetBtn = document.createElement("button");
+  resetBtn.className = "big danger";
+  resetBtn.textContent = "🗑 Сбросить прогресс";
+  resetBtn.onclick = () => {
+    if (!confirm("Сбросить весь прогресс?")) return;
+    SAVE = { unlocked: 1, best: 0, bank: 0, completed: {}, bosses: {},
+             dmg_lvl: 0, rate_lvl: 0, hp_lvl: 0, laser: false };
+    writeSave();
+    updateInfo();
+    renderMenuContent();
+  };
+  row.appendChild(resetBtn);
+
+  menuContent.appendChild(row);
+}
+
+// ============================================================
+//  МАГАЗИН
+// ============================================================
+function showShop() {
+  game.state = "shop";
+  menuEl.classList.remove("hidden");
+  updateInfo();
+  renderShopContent();
+}
+
+function renderShopContent() {
+  menuContent.innerHTML = "";
+
+  menuContent.appendChild(makeShopRow({
+    title: `Урон: ${playerDamage()}${SAVE.dmg_lvl < DMG_COSTS.length ? " → " + (playerDamage()+1) : " (МАКС)"}`,
+    sub: SAVE.dmg_lvl < DMG_COSTS.length ? `${DMG_COSTS[SAVE.dmg_lvl]} очков (${SAVE.dmg_lvl}/${DMG_COSTS.length})` : "—",
+    canBuy: SAVE.dmg_lvl < DMG_COSTS.length && SAVE.bank >= (DMG_COSTS[SAVE.dmg_lvl] || Infinity),
+    onBuy: () => {
+      const cost = DMG_COSTS[SAVE.dmg_lvl];
+      SAVE.bank -= cost; SAVE.dmg_lvl += 1; writeSave();
+      updateInfo(); renderShopContent();
+    }
+  }));
+
+  menuContent.appendChild(makeShopRow({
+    title: `Скорострельность: ${playerShootCd().toFixed(2)}с${SAVE.rate_lvl < RATE_COSTS.length ? " → " + (playerShootCd()*0.85).toFixed(2) + "с" : " (МАКС)"}`,
+    sub: SAVE.rate_lvl < RATE_COSTS.length ? `${RATE_COSTS[SAVE.rate_lvl]} очков (${SAVE.rate_lvl}/${RATE_COSTS.length})` : "—",
+    canBuy: SAVE.rate_lvl < RATE_COSTS.length && SAVE.bank >= (RATE_COSTS[SAVE.rate_lvl] || Infinity),
+    onBuy: () => {
+      const cost = RATE_COSTS[SAVE.rate_lvl];
+      SAVE.bank -= cost; SAVE.rate_lvl += 1; writeSave();
+      updateInfo(); renderShopContent();
+    }
+  }));
+
+  menuContent.appendChild(makeShopRow({
+    title: `Здоровье: ${HP_VALUES[SAVE.hp_lvl]}${SAVE.hp_lvl < HP_COSTS.length ? " → " + HP_VALUES[SAVE.hp_lvl+1] : " (МАКС)"}`,
+    sub: SAVE.hp_lvl < HP_COSTS.length ? `${HP_COSTS[SAVE.hp_lvl]} очков (${SAVE.hp_lvl}/${HP_COSTS.length})` : "—",
+    canBuy: SAVE.hp_lvl < HP_COSTS.length && SAVE.bank >= (HP_COSTS[SAVE.hp_lvl] || Infinity),
+    onBuy: () => {
+      const cost = HP_COSTS[SAVE.hp_lvl];
+      SAVE.bank -= cost; SAVE.hp_lvl += 1; writeSave();
+      updateInfo(); renderShopContent();
+    }
+  }));
+
+  menuContent.appendChild(makeShopRow({
+    title: SAVE.laser ? "🔥 ЛАЗЕР — КУПЛЕН" : "🔥 ЛАЗЕРНАЯ ПУШКА",
+    sub: SAVE.laser ? "Стреляет непрерывным лучом" : `Цена: ${LASER_COST} очков`,
+    canBuy: !SAVE.laser && SAVE.bank >= LASER_COST,
+    onBuy: () => {
+      SAVE.bank -= LASER_COST; SAVE.laser = true; writeSave();
+      updateInfo(); renderShopContent();
+    }
+  }));
+
+  const row = document.createElement("div");
+  row.className = "row";
+  const back = document.createElement("button");
+  back.className = "big";
+  back.textContent = "← Назад в меню";
+  back.onclick = () => showMenu();
+  row.appendChild(back);
+
+  if (game.currentLevel < LEVELS && SAVE.completed[String(game.currentLevel)]) {
+    const next = document.createElement("button");
+    next.className = "big";
+    next.textContent = `▶ Играть уровень ${game.currentLevel + 1}`;
+    next.onclick = () => {
+      menuEl.classList.add("hidden");
+      game.nextLevel();
+    };
+    row.appendChild(next);
+  }
+  menuContent.appendChild(row);
+}
+
+function makeShopRow({ title, sub, canBuy, onBuy }) {
+  const div = document.createElement("div");
+  div.className = "shop-row";
+  const t = document.createElement("div"); t.className = "title"; t.textContent = title;
+  const s = document.createElement("div"); s.className = "sub";   s.textContent = sub;
+  const b = document.createElement("button");
+  b.textContent = canBuy ? "Купить" : (sub === "—" ? "МАКС" : "Недостаточно очков");
+  b.disabled = !canBuy;
+  b.onclick = onBuy;
+  div.appendChild(t); div.appendChild(s); div.appendChild(b);
+  return div;
+}
+
+// ============================================================
+//  ENTER
+// ============================================================
+function handleEnter() {
+  if (game.state === "shop") {
+    menuEl.classList.add("hidden");
+    game.nextLevel();
+  }
+}
+
+// ============================================================
+//  ГЛАВНЫЙ ЦИКЛ
+// ============================================================
+let lastTime = performance.now();
+let lastState = "";
+
+function loop(now) {
+  let dt = (now - lastTime) / 1000;
+  lastTime = now;
+  dt = Math.min(dt, 0.05);
+
+  if (game.state === "playing") {
+    if (menuEl && !menuEl.classList.contains("hidden")) menuEl.classList.add("hidden");
+    game.update(dt, input);
+  }
+
+  if (game.state === "shop" && lastState !== "shop") {
+    showShop();
+  } else if (game.state === "menu" && lastState !== "menu") {
+    showMenu();
+  } else if (game.state === "victory" && lastState !== "victory") {
+    showVictory();
+  }
+  lastState = game.state;
+
+  game.draw(ctx);
+
+  requestAnimationFrame(loop);
+}
+
+// ============================================================
+//  ЭКРАН ПОБЕДЫ
+// ============================================================
+function showVictory() {
+  game.state = "victory";
+  menuEl.classList.remove("hidden");
+  updateInfo();
+  menuContent.innerHTML = "";
+
+  const h = document.createElement("h1");
+  h.textContent = "🏆 ПОБЕДА!";
+  menuContent.appendChild(h);
+
+  const l1 = document.createElement("div"); l1.className = "info";
+  l1.textContent = "Все 50 уровней пройдены!"; menuContent.appendChild(l1);
+  const l2 = document.createElement("div"); l2.className = "info";
+  l2.textContent = `Очки: ${game.score} · Банк: ${SAVE.bank}`; menuContent.appendChild(l2);
+  const l3 = document.createElement("div"); l3.className = "info";
+  l3.textContent = `Рекорд: ${SAVE.best}`; menuContent.appendChild(l3);
+
+  const row = document.createElement("div"); row.className = "row";
+  const back = document.createElement("button");
+  back.className = "big";
+  back.textContent = "🏠 В меню";
+  back.onclick = () => showMenu();
+  row.appendChild(back);
+  menuContent.appendChild(row);
+}
+
+// ============================================================
+//  СТАРТ
+// ============================================================
+showMenu();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
