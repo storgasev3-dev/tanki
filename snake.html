@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Змейка</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; background: #232d23; color: #fff;
+    font-family: Arial, sans-serif; overflow: hidden; touch-action: none; user-select: none; }
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  #score { font-size: 20px; margin-bottom: 8px; }
+  canvas { background: #1a221a; border: 2px solid #4a6; max-width: 95vw; max-height: 80vh; }
+  #hint { margin-top: 8px; font-size: 14px; opacity: .7; }
+</style>
+</head>
+<body>
+<div id="score">Счёт: 0 | Рекорд: 0</div>
+<canvas id="c" width="400" height="400"></canvas>
+<div id="hint">Стрелки/WASD или свайп. Пробел — пауза/рестарт.</div>
+<script>
+const N = 20, S = 20;
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const scoreEl = document.getElementById('score');
+let snake, dir, nextDir, food, score, over, paused, timer;
+let best = +localStorage.getItem('snakeBest') || 0;
+
+function placeFood() {
+  do { food = {x: Math.floor(Math.random()*N), y: Math.floor(Math.random()*N)}; }
+  while (snake.some(s => s.x === food.x && s.y === food.y));
+}
+function reset() {
+  snake = [{x:10,y:10},{x:9,y:10},{x:8,y:10}];
+  dir = nextDir = {x:1,y:0};
+  score = 0; over = false; paused = false;
+  placeFood(); updateScore();
+  clearInterval(timer); timer = setInterval(tick, 110);
+  draw();
+}
+function updateScore() { scoreEl.textContent = `Счёт: ${score} | Рекорд: ${best}`; }
+function tick() {
+  if (over || paused) return;
+  dir = nextDir;
+  const h = {x: snake[0].x + dir.x, y: snake[0].y + dir.y};
+  const eat = h.x === food.x && h.y === food.y;
+  const body = eat ? snake : snake.slice(0, -1);
+  if (h.x < 0 || h.y < 0 || h.x >= N || h.y >= N || body.some(s => s.x === h.x && s.y === h.y)) {
+    over = true;
+    if (score > best) { best = score; localStorage.setItem('snakeBest', best); }
+    updateScore(); draw(); return;
+  }
+  snake.unshift(h);
+  if (eat) { score++; updateScore(); placeFood(); } else snake.pop();
+  draw();
+}
+function draw() {
+  ctx.fillStyle = '#1a221a'; ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.fillStyle = '#e44';
+  ctx.beginPath(); ctx.arc(food.x*S+S/2, food.y*S+S/2, S/2-2, 0, 7); ctx.fill();
+  snake.forEach((s, i) => {
+    ctx.fillStyle = i ? '#4c4' : '#8f8';
+    ctx.fillRect(s.x*S+1, s.y*S+1, S-2, S-2);
+  });
+  if (over || paused) {
+    ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.font = '28px Arial';
+    ctx.fillText(over ? 'Игра окончена' : 'Пауза', cv.width/2, cv.height/2);
+    ctx.font = '16px Arial';
+    ctx.fillText(over ? 'Пробел или тап — заново' : 'Пробел — продолжить', cv.width/2, cv.height/2+30);
+  }
+}
+function turn(x, y) {
+  if (x === -dir.x && y === -dir.y) return;
+  nextDir = {x, y};
+}
+const keys = {ArrowUp:[0,-1],w:[0,-1],ArrowDown:[0,1],s:[0,1],ArrowLeft:[-1,0],a:[-1,0],ArrowRight:[1,0],d:[1,0]};
+addEventListener('keydown', e => {
+  if (e.key === ' ') { e.preventDefault(); if (over) reset(); else { paused = !paused; draw(); } return; }
+  const k = keys[e.key] || keys[e.key.toLowerCase()];
+  if (k) { e.preventDefault(); turn(...k); }
+});
+let t0;
+addEventListener('touchstart', e => { t0 = e.touches[0]; if (over) reset(); });
+addEventListener('touchend', e => {
+  if (!t0) return;
+  const t = e.changedTouches[0], dx = t.clientX - t0.clientX, dy = t.clientY - t0.clientY;
+  if (Math.max(Math.abs(dx), Math.abs(dy)) < 20) return;
+  if (Math.abs(dx) > Math.abs(dy)) turn(dx > 0 ? 1 : -1, 0); else turn(0, dy > 0 ? 1 : -1);
+});
+reset();
+</script>
+</body>
+</html>
